@@ -1,12 +1,12 @@
-#pragma GCC push_options
-#pragma GCC optimize("O3")
-
 #include <Arduino.h>
-#include "lvgl.h"
-#include "demos/lv_demos.h"
+#include <lvgl.h>
+//#include <src/demos/lv_demos.h> // INCLUDED VERSION OF LVGL IS 9.2.2
 #include "pins_config.h"
 #include "src/lcd/jd9365_lcd.h"
 #include "src/touch/gsl3680_touch.h"
+
+//extern void lv_demo_widgets(void);
+
 
 jd9365_lcd lcd = jd9365_lcd(LCD_RST);
 gsl3680_touch touch = gsl3680_touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
@@ -73,7 +73,14 @@ void setup()
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, my_touchpad_read);
 
-  lv_demo_widgets(); /* 小部件示例 */
+ // lv_demo_widgets(); /* 小部件示例 */
+
+  /* Tworzymy prosty obiekt zajmujący cały ekran, żeby sprawdzić czy panel działa */
+  lv_obj_t * scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, lv_color_make(0, 0, 255), LV_PART_MAIN); // Jaskrawy czerwony kolor tła
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+
   // lv_demo_music();        /* 类似智能手机的现代音乐播放器演示 */
   // lv_demo_stress();       /* LVGL 压力测试 */
   // lv_demo_benchmark();    /* 用于测量 LVGL 性能或比较不同设置的演示 */
