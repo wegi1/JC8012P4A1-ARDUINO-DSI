@@ -1,95 +1,65 @@
+
+#pragma GCC push_options
+#pragma GCC optimize("O3")
 #include <Arduino.h>
-#include <lvgl.h>
-//#include <src/demos/lv_demos.h> // INCLUDED VERSION OF LVGL IS 9.2.2
 #include "pins_config.h"
 #include "src/lcd/jd9365_lcd.h"
 #include "src/touch/gsl3680_touch.h"
 
-//extern void lv_demo_widgets(void);
-
-
+// Obiekty globalne z wegi1 (inicjalizują bazowe piny zasilania i BL)
 jd9365_lcd lcd = jd9365_lcd(LCD_RST);
 gsl3680_touch touch = gsl3680_touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
 
-// static lv_disp_draw_buf_t draw_buf;
-lv_display_t * disp_drv;
-static uint32_t *buf;
-static uint32_t *buf1;
-
-// 显示刷新
-void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * color_map)
-{
-  const int offsetx1 = area->x1;
-  const int offsetx2 = area->x2;
-  const int offsety1 = area->y1;
-  const int offsety2 = area->y2;
-  lcd.lcd_draw_bitmap(offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
-  lv_display_flush_ready(disp); // 告诉lvgl刷新完成
-}
-
-void my_touchpad_read(lv_indev_t *indev_driver, lv_indev_data_t *data)
-{
-  bool touched;
-  uint16_t touchX, touchY;
-
-  touched = touch.getTouch(&touchX, &touchY);
-
-  if (!touched)
-  {
-    data->state = LV_INDEV_STATE_REL;
-  }
-  else
-  {
-    data->state = LV_INDEV_STATE_PR;
-
-    // 设置坐标
-    data->point.x = touchX;
-    data->point.y = touchY;
-    Serial.printf("x=%d,y=%d \r\n",touchX,touchY);
-  }
-}
+// POPRAWKA: Bufory 16-bitowe (RGB565), dokładnie tak jak w natywnym potoku graficznym
+uint16_t* buffer_red = nullptr;
+uint16_t* buffer_blue = nullptr;
 
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("ESP32P4 MIPI DSI LVGL");
+  delay(500); 
+  Serial.println("\n\n=================================================");
+  Serial.println(">>> SZYBKI MIGACZ RGB565 (BEZ LVGL) - REWIZJA v5 <<<");
+  Serial.println("=================================================");
+
+  // 1. BUDZENIE SPRZĘTU (Zasilanie, zegary DSI, Backlight)
+  // Robimy to NAJPIERW, aby ustabilizować kontroler DMA
   lcd.begin();
   touch.begin();
+  Serial.println("[HARDWARE] Magistrala MIPI-DSI zainicjalizowana.");
 
-  lv_init();
-  uint32_t buffer_size = LCD_H_RES * LCD_V_RES;
-
-  buf = (uint32_t *)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM);
-  buf1 =(uint32_t *)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM);
-  assert(buf);
-  assert(buf1);
+  // 2. NOWA ALOKACJA: 16-bit (2 bajty na piksel)
+  uint32_t total_pixels = LCD_H_RES * LCD_V_RES;
+  uint32_t total_bytes = total_pixels * 2; // Zmiana z 4 na 2 bajty!
   
-  disp_drv = lv_display_create(LCD_H_RES, LCD_V_RES);
-  lv_display_set_flush_cb(disp_drv, my_disp_flush);
-  lv_display_set_buffers(disp_drv, buf, buf1, buffer_size * sizeof(uint32_t), LV_DISPLAY_RENDER_MODE_FULL);
-  /*Initialize the display*/
+  Serial.printf("[PSRAM] Rezerwacja odchudzonych buforów: 2x %d bajtów...\n", total_bytes);
+  buffer_red = (uint16_t *)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  buffer_blue = (uint16_t *)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
-  lv_indev_t * indev = lv_indev_create();
-  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-  lv_indev_set_read_cb(indev, my_touchpad_read);
+  if (buffer_red == nullptr || buffer_blue == nullptr) {
+    Serial.println("CRITICAL: Brak pamięci w PSRAM dla RGB565!");
+    while(1);
+  }
 
- // lv_demo_widgets(); /* 小部件示例 */
-
-  /* Tworzymy prosty obiekt zajmujący cały ekran, żeby sprawdzić czy panel działa */
-  lv_obj_t * scr = lv_screen_active();
-  lv_obj_set_style_bg_color(scr, lv_color_make(0, 0, 255), LV_PART_MAIN); // Jaskrawy czerwony kolor tła
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-
-
-  // lv_demo_music();        /* 类似智能手机的现代音乐播放器演示 */
-  // lv_demo_stress();       /* LVGL 压力测试 */
-  // lv_demo_benchmark();    /* 用于测量 LVGL 性能或比较不同设置的演示 */
-  Serial.println("setup ");
+  // 3. DEFINICJA KOLORÓW W FORMACIE RGB565 (16-bit: RRRRRGGGGGGBBBBB)
+  // Czerwony: R=max (0x1F), G=0, B=0       -> 0xF800
+  // Niebieski: R=0, G=0, B=max (0x1F)      -> 0x001F
+  for (uint32_t i = 0; i < total_pixels; i++) {
+    buffer_red[i]  = 0xF800; 
+    buffer_blue[i] = 0x001F; 
+  }
+  Serial.println("[PSRAM] Bufory RGB565 zostały przygotowane w pamięci.");
+  Serial.println(">>> START PĘTLI GŁÓWNEJ <<<\n");
 }
 
 void loop()
 {
-  lv_timer_handler();
-  lv_tick_inc(5);
-  delay(5);
+  Serial.println("[LOG] Wysyłanie DMA -> CZERWONY");
+  // Przekazujemy adres bufora rzutowany na (uint8_t*) zgodnie z sygnaturą funkcji
+  lcd.lcd_draw_bitmap(0, 0, LCD_H_RES, LCD_V_RES, (uint8_t*)buffer_red);
+  delay(1000); 
+
+  Serial.println("[LOG] Wysyłanie DMA -> NIEBIESKI");
+  lcd.lcd_draw_bitmap(0, 0, LCD_H_RES, LCD_V_RES, (uint8_t*)buffer_blue);
+  delay(1000); 
 }
